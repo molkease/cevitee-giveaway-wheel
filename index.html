@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CEVITEE Giveaway Wheel</title>
+<style>
+  :root{
+    --bg:#0f0f12; --panel:#17171c; --line:#26262e; --text:#f2f2f4;
+    --muted:#9a9aa6; --red:#e74c3c; --reddim:#b93a2c;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:"Segoe UI",system-ui,Arial,sans-serif;
+    display:flex; min-height:100vh;
+  }
+  .side{
+    width:380px; min-width:320px; background:var(--panel);
+    border-right:1px solid var(--line); padding:22px; display:flex; flex-direction:column; gap:14px;
+  }
+  .brand{display:flex; align-items:center; gap:10px}
+  .brand .dot{width:14px;height:14px;border-radius:3px;background:var(--red)}
+  .brand h1{font-size:19px; margin:0; letter-spacing:.5px}
+  .count{
+    display:flex; align-items:baseline; gap:8px;
+    background:#101014; border:1px solid var(--line); border-radius:10px; padding:12px 14px;
+  }
+  .count b{font-size:30px; color:var(--red); line-height:1}
+  .count span{color:var(--muted); font-size:13px}
+  label.cap{color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.8px}
+  textarea{
+    flex:1; min-height:220px; resize:none; width:100%;
+    background:#101014; color:var(--text); border:1px solid var(--line); border-radius:10px;
+    padding:12px; font-family:"Cascadia Code",Consolas,monospace; font-size:13px; line-height:1.45;
+  }
+  textarea:focus{outline:none; border-color:var(--reddim)}
+  .row{display:flex; gap:10px}
+  button{
+    cursor:pointer; border:none; border-radius:10px; padding:11px 14px; font-size:14px; font-weight:600;
+    background:#20202a; color:var(--text); transition:background .15s, transform .05s;
+  }
+  button:hover{background:#2a2a36}
+  button:active{transform:translateY(1px)}
+  button.ghost{background:transparent; border:1px solid var(--line); color:var(--muted)}
+  .stage{flex:1; display:flex; align-items:center; justify-content:center; position:relative; padding:24px}
+  .wheelwrap{position:relative; width:min(78vh,78vw); max-width:720px; aspect-ratio:1/1}
+  canvas{width:100%; height:100%; display:block; cursor:pointer}
+  .spinbtn{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:92px; height:92px; border-radius:50%; background:#fff; color:#111; font-size:16px; font-weight:800;
+    box-shadow:0 6px 24px rgba(0,0,0,.5); border:4px solid var(--red); letter-spacing:.5px;
+  }
+  .spinbtn:hover{background:#fff}
+  .spinbtn:disabled{opacity:.55; cursor:default}
+  /* winner modal */
+  .overlay{
+    position:fixed; inset:0; background:rgba(8,8,10,.72); display:none;
+    align-items:center; justify-content:center; z-index:10;
+  }
+  .overlay.show{display:flex; animation:fade .2s ease}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .modal{
+    background:var(--panel); border:2px solid var(--red); border-radius:18px; padding:30px 42px;
+    text-align:center; min-width:380px; max-width:86vw; box-shadow:0 20px 70px rgba(0,0,0,.6);
+  }
+  .modal .k{color:var(--red); text-transform:uppercase; letter-spacing:2px; font-size:14px; font-weight:700}
+  .modal .name{font-size:clamp(28px,5vw,56px); font-weight:800; margin:10px 0 22px; word-break:break-word}
+  .modal .row{justify-content:center}
+  .hint{color:var(--muted); font-size:12px}
+</style>
+</head>
+<body>
+  <aside class="side">
+    <div class="brand"><div class="dot"></div><h1>CEVITEE Giveaway</h1></div>
+    <div class="count"><b id="cnt">0</b><span>entries</span></div>
+    <label class="cap" for="names">Paste nicknames, one per line</label>
+    <textarea id="names" placeholder="name one&#10;name two&#10;name three&#10;..." spellcheck="false"></textarea>
+    <div class="row">
+      <button id="shuffle" class="ghost">Shuffle</button>
+      <button id="clear" class="ghost">Clear</button>
+    </div>
+    <div class="hint">Winner is drawn with the browser's secure RNG. The pointer is the source of truth.</div>
+  </aside>
+
+  <main class="stage">
+    <div class="wheelwrap">
+      <canvas id="wheel" width="1200" height="1200"></canvas>
+      <button id="spin" class="spinbtn">SPIN</button>
+    </div>
+  </main>
+
+  <div class="overlay" id="overlay">
+    <div class="modal">
+      <div class="k">Winner</div>
+      <div class="name" id="winnerName">-</div>
+      <div class="row">
+        <button id="again">Close</button>
+        <button id="remove" class="ghost">Remove and spin again</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+const PALETTE = ["#ec4c3c","#e67e22","#f1c40f","#2ecc71","#1abc9c","#3498db","#9b59b6","#e74c88","#34495e","#16a085"];
+const DPR = 2;
+const canvas = document.getElementById("wheel");
+const ctx = canvas.getContext("2d");
+const ta = document.getElementById("names");
+const cntEl = document.getElementById("cnt");
+const spinBtn = document.getElementById("spin");
+const overlay = document.getElementById("overlay");
+const winnerNameEl = document.getElementById("winnerName");
+
+let names = [];
+let wheelCanvas = null;   // offscreen pre-rendered wheel
+let rotation = 0;         // current rotation (radians, clockwise)
+let spinning = false;
+
+function parseNames(){
+  names = ta.value.split("\n").map(s=>s.trim()).filter(Boolean);
+  cntEl.textContent = names.length;
+  buildWheel();
+  draw();
+}
+
+function buildWheel(){
+  const n = names.length;
+  const size = 1200;
+  wheelCanvas = document.createElement("canvas");
+  wheelCanvas.width = wheelCanvas.height = size;
+  const c = wheelCanvas.getContext("2d");
+  const cx = size/2, cy = size/2, r = size/2 - 6;
+  if(n === 0){
+    c.fillStyle = "#1b1b22"; c.beginPath(); c.arc(cx,cy,r,0,Math.PI*2); c.fill();
+    return;
+  }
+  const seg = (Math.PI*2)/n;
+  const stroke = n <= 120;
+  for(let i=0;i<n;i++){
+    const a0 = i*seg, a1 = (i+1)*seg;
+    c.beginPath(); c.moveTo(cx,cy); c.arc(cx,cy,r,a0,a1); c.closePath();
+    c.fillStyle = PALETTE[i % PALETTE.length]; c.fill();
+    if(stroke){ c.lineWidth = 2; c.strokeStyle = "rgba(255,255,255,.35)"; c.stroke(); }
+  }
+  // labels only when readable
+  if(n <= 80){
+    c.fillStyle = "#fff";
+    c.font = "bold " + Math.max(12, Math.floor(r*0.05)) + "px Segoe UI, Arial";
+    c.textAlign = "right"; c.textBaseline = "middle";
+    for(let i=0;i<n;i++){
+      const a = (i+0.5)*seg;
+      c.save(); c.translate(cx,cy); c.rotate(a);
+      c.fillText(names[i].slice(0,22), r-16, 0);
+      c.restore();
+    }
+  }
+}
+
+function draw(){
+  const size = 1200;
+  canvas.width = size*DPR/2; canvas.height = size*DPR/2;
+  const W = canvas.width, H = canvas.height, cx = W/2, cy = H/2, r = W/2 - 8;
+  ctx.clearRect(0,0,W,H);
+  // rotated wheel
+  if(wheelCanvas){
+    ctx.save(); ctx.translate(cx,cy); ctx.rotate(rotation);
+    ctx.drawImage(wheelCanvas, -r, -r, r*2, r*2);
+    ctx.restore();
+  }
+  // outer ring
+  ctx.lineWidth = Math.max(4, r*0.02); ctx.strokeStyle = "#0b0b0e";
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke();
+  // hub
+  const hr = r*0.1;
+  ctx.beginPath(); ctx.arc(cx,cy,hr,0,Math.PI*2); ctx.fillStyle="#fff"; ctx.fill();
+  ctx.lineWidth = Math.max(3,r*0.012); ctx.strokeStyle = "#e74c3c"; ctx.stroke();
+  // pointer at right (east) pointing left into the wheel
+  const tip = cx + r - r*0.015;
+  const base = cx + r + r*0.085;
+  const pw = r*0.05;
+  ctx.beginPath(); ctx.moveTo(tip,cy); ctx.lineTo(base,cy-pw); ctx.lineTo(base,cy+pw); ctx.closePath();
+  ctx.fillStyle = "#e74c3c"; ctx.fill();
+}
+
+function rnd(){ const b = new Uint32Array(1); crypto.getRandomValues(b); return b[0]/4294967296; }
+
+function easeOutCubic(p){ return 1 - Math.pow(1-p, 3); }
+
+function winnerIndexFor(rot){
+  const n = names.length; if(!n) return -1;
+  const seg = (Math.PI*2)/n;
+  let local = (-rot) % (Math.PI*2); if(local < 0) local += Math.PI*2;
+  return Math.floor(local / seg) % n;
+}
+
+function spin(){
+  if(spinning || names.length === 0) return;
+  spinning = true; spinBtn.disabled = true;
+  const dur = 6500 + rnd()*1500;
+  const turns = 6 + Math.floor(rnd()*3);
+  const start = rotation;
+  const delta = turns*Math.PI*2 + rnd()*Math.PI*2;
+  const t0 = performance.now();
+  function frame(now){
+    const p = Math.min(1, (now - t0)/dur);
+    rotation = start + delta*easeOutCubic(p);
+    draw();
+    if(p < 1){ requestAnimationFrame(frame); }
+    else {
+      rotation = (start + delta) % (Math.PI*2);
+      draw();
+      spinning = false; spinBtn.disabled = false;
+      const idx = winnerIndexFor(rotation);
+      showWinner(names[idx], idx);
+    }
+  }
+  requestAnimationFrame(frame);
+}
+
+let lastWinnerIdx = -1;
+function showWinner(name, idx){
+  lastWinnerIdx = idx;
+  winnerNameEl.textContent = name;
+  overlay.classList.add("show");
+}
+
+document.getElementById("again").onclick = ()=> overlay.classList.remove("show");
+document.getElementById("remove").onclick = ()=>{
+  if(lastWinnerIdx >= 0){
+    names.splice(lastWinnerIdx,1);
+    ta.value = names.join("\n");
+    cntEl.textContent = names.length;
+    buildWheel(); rotation = 0; draw();
+  }
+  overlay.classList.remove("show");
+};
+document.getElementById("shuffle").onclick = ()=>{
+  for(let i=names.length-1;i>0;i--){ const j=Math.floor(rnd()*(i+1)); [names[i],names[j]]=[names[j],names[i]]; }
+  ta.value = names.join("\n"); buildWheel(); draw();
+};
+document.getElementById("clear").onclick = ()=>{ ta.value=""; parseNames(); };
+
+ta.addEventListener("input", parseNames);
+canvas.addEventListener("click", spin);
+spinBtn.addEventListener("click", spin);
+overlay.addEventListener("click", e=>{ if(e.target===overlay) overlay.classList.remove("show"); });
+
+parseNames();
+</script>
+</body>
+</html>
